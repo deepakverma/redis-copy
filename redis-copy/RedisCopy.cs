@@ -56,33 +56,36 @@ namespace redis_copy
             sw = Stopwatch.StartNew();
             foreach (var key in sourcecon.GetServer(sourcecon.GetEndPoints()[0]).Keys(dbToCopy)) //SE.Redis internally calls SCAN here
             {
-               sourcedb.KeyTimeToLiveAsync(key).ContinueWith(s =>
-               {
-                   if (s.IsFaulted)
-                   {
-                       throw new AggregateException(s.Exception);
-                   }
-                   else
-                   {
-                       sourcedb.KeyDumpAsync(key).ContinueWith(r =>
-                       {
-                           if (r.IsFaulted)
-                           {
-                                throw new AggregateException(r.Exception);
-                           }
-                           else
-                           {
-                               destdb.KeyRestoreAsync(key, r.Result, s.Result);
-                               Interlocked.Increment(ref totalKeysCopied);
-                               if (totalKeysCopied % 50 == 0)
+                sourcedb.KeyTimeToLiveAsync(key).ContinueWith(ttl =>
+                {
+                    if (ttl.IsFaulted || ttl.IsCanceled)
+                    {
+                        throw new AggregateException(ttl.Exception);
+                    }
+                    else
+                    {
+                        sourcedb.KeyDumpAsync(key).ContinueWith(dump =>
+                        {
+                            if (dump.IsFaulted || dump.IsCanceled)
+                            {
+                                throw new AggregateException(dump.Exception);
+                            }
+                            else
+                            {
+                               //Redis > 3.0, if key already exists it won't overwrite
+                               destdb.KeyRestoreAsync(key, dump.Result, ttl.Result).ContinueWith(restore =>
                                {
-                                   progress.Report(totalKeysCopied);
-                               }
-                           }
-                       }
-                       );
-                   }
-               });
+                                   Interlocked.Increment(ref totalKeysCopied);
+                                   if (totalKeysCopied % 10 == 0)
+                                   {
+                                       progress.Report(totalKeysCopied);
+                                   }
+                               });
+                            }
+                        }
+                        );
+                    }
+                });
             }
             
             //block to monitor completion
