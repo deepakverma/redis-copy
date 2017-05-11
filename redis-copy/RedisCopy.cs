@@ -29,7 +29,7 @@ namespace redis_copy
             Progress = new Progress<long>();
             ConfigurationOptions configsource = new ConfigurationOptions();
             configsource.EndPoints.Add(options.SourceEndpoint, options.SourcePort);
-            configsource.Ssl = options.sourceSSL;
+            configsource.Ssl = options.SourceSSL;
             configsource.Password = options.SourcePassword;
             configsource.AllowAdmin = true;
             configsource.SyncTimeout = 60000; // increasing timeout for source for SCAN command
@@ -37,24 +37,24 @@ namespace redis_copy
 
             ConfigurationOptions configdestination = new ConfigurationOptions();
             configdestination.EndPoints.Add(options.DestinationEndpoint, options.DestinationPort);
-            configdestination.Ssl = options.destinationSSL;
+            configdestination.Ssl = options.DestinationSSL;
             configdestination.Password = options.DestinationPassword;
             configdestination.AllowAdmin = true;
             destcon = ConnectionMultiplexer.Connect(configdestination);
 
         }
 
-        public void Copy(IProgress<long> progress)
+        public void Copy(int dbToCopy, IProgress<long> progress)
         {
             totalKeysCopied = 0;
             IsCopyComplete = false;
-            InfoTotalKeysSource = GetTotalKeysFromInfo(sourcecon);
+            InfoTotalKeysSource = GetTotalKeysFromInfo(dbToCopy, sourcecon);
 
-            var sourcedb = sourcecon.GetDatabase();
-            var destdb = destcon.GetDatabase();
+            var sourcedb = sourcecon.GetDatabase(dbToCopy);
+            var destdb = destcon.GetDatabase(dbToCopy);
             
             sw = Stopwatch.StartNew();
-            foreach (var key in sourcecon.GetServer(sourcecon.GetEndPoints()[0]).Keys(0, "*")) //SE.Redis internally calls SCAN here
+            foreach (var key in sourcecon.GetServer(sourcecon.GetEndPoints()[0]).Keys(dbToCopy)) //SE.Redis internally calls SCAN here
             {
                sourcedb.KeyTimeToLiveAsync(key).ContinueWith(s =>
                {
@@ -89,17 +89,17 @@ namespace redis_copy
             while (TotalKeysCopiedToDestination < InfoTotalKeysSource);
             sw.Stop();
             TotalTimeTakenToCopySeconds = sw.Elapsed.TotalSeconds;
-            InfoTotalKeysDestinationAfterCompletion = GetTotalKeysFromInfo(destcon);
+            InfoTotalKeysDestinationAfterCompletion = GetTotalKeysFromInfo(dbToCopy, destcon);
             if (InfoTotalKeysDestinationAfterCompletion != InfoTotalKeysSource)
             {
                 throw new Exception($"source key count={InfoTotalKeysSource} doesn't match destination key count={InfoTotalKeysDestinationAfterCompletion}");
             }
         }
         
-        private long GetTotalKeysFromInfo(ConnectionMultiplexer conn)
+        private long GetTotalKeysFromInfo(int dbToCopy, ConnectionMultiplexer conn)
         {
             var keyspace = conn.GetServer(conn.GetEndPoints()[0]).Info("keyspace");
-            return long.Parse(keyspace.First().First().Value.Split(new char[] { ',' })[0].Split(new char[] { '=' })[1]);
+            return long.Parse(keyspace.First().ElementAt(dbToCopy).Value.Split(new char[] { ',' })[0].Split(new char[] { '=' })[1]);
         }
 
     }

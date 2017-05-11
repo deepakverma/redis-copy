@@ -16,7 +16,10 @@ namespace redis_copy
         public int SourcePort { get; set; }
 
         [Option("sssl", Required = false, DefaultValue = true, HelpText = "Connect Source over ssl" )]
-        public bool sourceSSL { get; set; }
+        public bool SourceSSL { get; set; }
+
+        [Option("db", Required = false, DefaultValue = 0, HelpText = "DB to Copy")]
+        public int DBToCopy { get; set; }
 
         [Option("de", Required = true, HelpText = "DestinationEndpoint *.redis.cache.windows.net") ]
         public string DestinationEndpoint { get; set; }
@@ -28,7 +31,8 @@ namespace redis_copy
         public int DestinationPort { get; set; }
 
         [Option("dssl", Required = false, DefaultValue = true, HelpText = "Destination Source over ssl" )]
-        public bool destinationSSL { get; set; }
+        public bool DestinationSSL { get; set; }
+
 
 
         [HelpOption]

@@ -21,7 +21,7 @@ namespace redis_copy
                 var copy = new RedisCopy(options);
                 Progress<long> progress = new Progress<long>();
                 progress.ProgressChanged += Progress_ProgressChanged;
-                copy.Copy(progress);
+                copy.Copy(options.DBToCopy, progress);
                 Console.WriteLine($"\n{copy.TotalKeysCopiedToDestination} keys copied in {copy.TotalTimeTakenToCopySeconds} seconds");
             }
         }
