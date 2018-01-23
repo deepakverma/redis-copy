@@ -93,7 +93,7 @@ namespace redis_copy
             sw.Stop();
             TotalTimeTakenToCopySeconds = sw.Elapsed.TotalSeconds;
             InfoTotalKeysDestinationAfterCompletion = GetTotalKeysFromInfo(dbToCopy, destcon);
-            if (InfoTotalKeysDestinationAfterCompletion != InfoTotalKeysSource)
+            if (InfoTotalKeysDestinationAfterCompletion < InfoTotalKeysSource)
             {
                 throw new Exception($"source key count={InfoTotalKeysSource} doesn't match destination key count={InfoTotalKeysDestinationAfterCompletion}");
             }
