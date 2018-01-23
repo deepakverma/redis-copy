@@ -95,7 +95,7 @@ namespace redis_copy
             InfoTotalKeysDestinationAfterCompletion = GetTotalKeysFromInfo(dbToCopy, destcon);
             if (InfoTotalKeysDestinationAfterCompletion < InfoTotalKeysSource)
             {
-                throw new Exception($"source key count={InfoTotalKeysSource} doesn't match destination key count={InfoTotalKeysDestinationAfterCompletion}");
+                Console.WriteLine($"!Warning: source key count={InfoTotalKeysSource} doesn't match destination key count={InfoTotalKeysDestinationAfterCompletion}.");
             }
         }
         
