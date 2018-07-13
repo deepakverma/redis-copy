@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using CommandLine;
 using CommandLine.Text;
 
@@ -12,13 +13,13 @@ namespace redis_copy
         [Option("sa", Required = true, HelpText = "Source password") ]
         public string SourcePassword { get; set; }
 
-        [Option("sp", Required = false, DefaultValue = 6380, HelpText = "Source port" )]
+        [Option("sp", Required = false, Default = 6380, HelpText = "Source port" )]
         public int SourcePort { get; set; }
 
-        [Option("sssl", Required = false, DefaultValue = true, HelpText = "Connect Source over ssl" )]
+        [Option("sssl", Required = false, Default = true, HelpText = "Connect Source over ssl" )]
         public bool SourceSSL { get; set; }
 
-        [Option("db", Required = false, DefaultValue = 0, HelpText = "DB to Copy")]
+        [Option("db", Required = false, Default = 0, HelpText = "DB to Copy")]
         public int DBToCopy { get; set; }
 
         [Option("de", Required = true, HelpText = "DestinationEndpoint *.redis.cache.windows.net") ]
@@ -27,34 +28,35 @@ namespace redis_copy
         [Option("da", Required = true, HelpText = "Destination Password") ]
         public string DestinationPassword { get; set; }
 
-        [Option("dp", Required = false, DefaultValue = 6380, HelpText = "Destination port" )]
+        [Option("dp", Required = false, Default = 6380, HelpText = "Destination port" )]
         public int DestinationPort { get; set; }
 
-        [Option("dssl", Required = false, DefaultValue = true, HelpText = "Destination Source over ssl" )]
+        [Option("dssl", Required = false, Default = true, HelpText = "Destination Source over ssl" )]
         public bool DestinationSSL { get; set; }
 
+        [Option("flushdest", Required = false, Default = false, HelpText = "Flush destination cache before copying")]
+        public bool DestinationFlush { get; set; }
 
-
-        [HelpOption]
-        public string GetUsage()
-        {
-            return HelpText.AutoBuild(this, text =>
-            {
-                HelpText.DefaultParsingErrorsHandler(this, text);
-                Console.WriteLine("Usage:");
-                Console.WriteLine($"redis-copy --se <sourceendpoint:port> --sa <sourcepassword> --de <endpoint:port> --da <destinationpassword>");
-            });
-        }
+        //[Option("overwritedest", Required = false, Default = false, HelpText = "Overwrites existing key in destination")]
+        //public bool OverwriteDestination { get; set; }
 
         public static Options Parse(string[] args)
         {
-            Options options = new Options();
-            if (!Parser.Default.ParseArguments(args, options))
+            Options options = null;
+            var parserResult = CommandLine.Parser.Default.ParseArguments<Options>(args);
+
+            parserResult.WithParsed<Options>(opts => options = opts)
+            .WithNotParsed<Options>((errs) =>
             {
-                return null;
-            }
+                var helpText = HelpText.AutoBuild(parserResult, h =>
+                {
+                return HelpText.DefaultParsingErrorsHandler(parserResult, h); 
+                }, e =>
+                {
+                    return e;
+                });
+            });
             return options;
         }
-
     }
 }

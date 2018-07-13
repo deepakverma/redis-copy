@@ -17,6 +17,9 @@ namespace redis_copy
         private ConnectionMultiplexer sourcecon;
         private ConnectionMultiplexer destcon;
         private string sourceEndpoint;
+        private string destEndpoint;
+        private bool flushdest = false;
+        private bool? flushdbconfirm = null;
 
         public Progress<long> Progress { get; private set; } 
         public double TotalTimeTakenToCopySeconds { get; private set; }
@@ -30,24 +33,27 @@ namespace redis_copy
         public RedisCopy(Options options)
         {
             Progress = new Progress<long>();
+
             ConfigurationOptions configsource = new ConfigurationOptions();
-            configsource.EndPoints.Add(options.SourceEndpoint, options.SourcePort);
             configsource.Ssl = options.SourceSSL;
             configsource.Password = options.SourcePassword;
             configsource.AllowAdmin = true;
             configsource.SyncTimeout = 60000; // increasing timeout for source for SCAN command
-            sourcecon = ConnectionMultiplexer.Connect(configsource);
-            sourceEndpoint = options.SourceEndpoint;
+            sourcecon = GetConnectionMultiplexer(options.SourceEndpoint, options.SourcePort, configsource);
+            
             ConfigurationOptions configdestination = new ConfigurationOptions();
-            configdestination.EndPoints.Add(options.DestinationEndpoint, options.DestinationPort);
             configdestination.Ssl = options.DestinationSSL;
             configdestination.Password = options.DestinationPassword;
             configdestination.AllowAdmin = true;
-            destcon = ConnectionMultiplexer.Connect(configdestination);
+            destcon = GetConnectionMultiplexer(options.DestinationEndpoint,options.DestinationPort, configdestination);
 
+            sourceEndpoint = options.SourceEndpoint;
+            destEndpoint = options.DestinationEndpoint;
+            flushdest = options.DestinationFlush;
+            //overwritedest = options.OverwriteDestination;
         }
 
-        private ConnectionMultiplexer GetShardConnection(string host, int port, ConfigurationOptions config)
+        private ConnectionMultiplexer GetConnectionMultiplexer(string host, int port, ConfigurationOptions config)
         {
             ConfigurationOptions shardconfig = new ConfigurationOptions();
             shardconfig.EndPoints.Add(host, port);
@@ -58,11 +64,11 @@ namespace redis_copy
             return ConnectionMultiplexer.Connect(shardconfig);
         }
 
-        private ClusterConfiguration GetSourceClustereNodes()
+        private ClusterConfiguration GetClusterNodes(ConnectionMultiplexer conn)
         {
             try
             {
-                return sourcecon.GetServer(sourcecon.GetEndPoints()[0]).ClusterNodes();
+                return conn.GetServer(conn.GetEndPoints()[0]).ClusterNodes();
             }
             catch
             {
@@ -70,17 +76,16 @@ namespace redis_copy
             }
         }
 
-        private void Copy(int dbToCopy, IProgress<long> progress, ConnectionMultiplexer sourcecon)
+        private void Copy(int dbToCopy, IProgress<long> progress, ConnectionMultiplexer conn)
         {
             totalKeysCopied = 0;
             IsCopyComplete = false;
-            InfoTotalKeysSource = GetTotalKeysFromInfo(dbToCopy, sourcecon);
+            InfoTotalKeysSource = GetTotalKeysFromInfo(dbToCopy, conn);
             TotalTimeTakenToCopySeconds = 0;
-            var sourcedb = sourcecon.GetDatabase(dbToCopy);
+            var sourcedb = conn.GetDatabase(dbToCopy);
             var destdb = destcon.GetDatabase(dbToCopy);
-            
             sw = Stopwatch.StartNew();
-            foreach (var key in sourcecon.GetServer(sourcecon.GetEndPoints()[0]).Keys(dbToCopy)) //SE.Redis internally calls SCAN here
+            foreach (var key in conn.GetServer(conn.GetEndPoints()[0]).Keys(dbToCopy)) //SE.Redis internally calls SCAN here
             {
                 sourcedb.KeyTimeToLiveAsync(key).ContinueWith(ttl =>
                 {
@@ -117,12 +122,12 @@ namespace redis_copy
             //block to monitor completion
             while (TotalKeysCopiedToDestination < InfoTotalKeysSource);
             sw.Stop();
-            TotalTimeTakenToCopySeconds = sw.Elapsed.TotalSeconds;
-            InfoTotalKeysDestinationAfterCompletion = GetTotalKeysFromInfo(dbToCopy, destcon);
-            if (InfoTotalKeysDestinationAfterCompletion < InfoTotalKeysSource)
-            {
-                Console.WriteLine($"!Warning: source key count={InfoTotalKeysSource} doesn't match destination key count={InfoTotalKeysDestinationAfterCompletion}.");
-            }
+            TotalTimeTakenToCopySeconds = Math.Round(sw.Elapsed.TotalSeconds);
+            //InfoTotalKeysDestinationAfterCompletion = GetTotalKeysFromInfo(dbToCopy, destcon);
+            //if (InfoTotalKeysDestinationAfterCompletion < InfoTotalKeysSource)
+            //{
+            //    Console.WriteLine($"!Warning: source key count={InfoTotalKeysSource} doesn't match destination key count={InfoTotalKeysDestinationAfterCompletion}.");
+            //}
         }
         
         private long GetTotalKeysFromInfo(int dbToCopy, ConnectionMultiplexer conn)
@@ -131,27 +136,76 @@ namespace redis_copy
             return long.Parse(keyspace.First().ElementAt(dbToCopy).Value.Split(new char[] { ',' })[0].Split(new char[] { '=' })[1]);
         }
 
+        private void FlushdbsIfOpted()
+        {
+            if (flushdest)
+            {
+                var destination = destcon.GetEndPoints()[0].ToString().Replace("Unspecified/", "");
+                if (!flushdbconfirm.HasValue)
+                {
+                    Console.Write($"Are you sure you want to flushalldatabases of {destEndpoint} before copying (y/n)?");
+                    char answ = Console.ReadKey().KeyChar;
+                    Console.WriteLine();
+                    if (answ != 'y' && answ != 'Y')
+                    {
+                        Console.WriteLine("Aborting");
+                        Environment.Exit(1);
+                        return;
+                    } else
+                    {
+                        flushdbconfirm = true;
+                    }
+                }
+                var destClusternodes = GetClusterNodes(destcon);
+                if (destClusternodes != null)
+                {
+                    var config = ConfigurationOptions.Parse(destcon.Configuration);
+
+                    foreach (var node in destClusternodes.Nodes)
+                    {
+                        if (!node.IsSlave)
+                        {
+                            if (flushdbconfirm.HasValue && flushdbconfirm.Value)
+                            {
+                                Console.WriteLine($"Flushing destination {destEndpoint}:{(node.EndPoint as IPEndPoint).Port}");
+                                var conn = GetConnectionMultiplexer(destEndpoint, (node.EndPoint as IPEndPoint).Port, config);
+                                conn.GetServer(conn.GetEndPoints()[0]).FlushAllDatabases();
+                                conn.Close();
+                            }
+                        }
+                    }
+                } else
+                {
+                    Console.WriteLine($"Flushing destination {destination}");
+                    destcon.GetServer(destcon.GetEndPoints()[0]).FlushAllDatabases();
+                }
+            }
+        }
+
         public void Copy(int dbToCopy, IProgress<long> progress)
         {
+            FlushdbsIfOpted();
             //if it's clustered cache loop on each of the shard and copy
-            var clusternodes = GetSourceClustereNodes();
-            if (clusternodes != null)
+            var sourceClusternodes = GetClusterNodes(sourcecon);
+            if (sourceClusternodes != null)
             {
                 var config = ConfigurationOptions.Parse(sourcecon.Configuration);
-                foreach (var node in clusternodes.Nodes)
+
+                foreach (var node in sourceClusternodes.Nodes)
                 {
                     if (!node.IsSlave)
                     {
-                        Console.WriteLine($"Copying keys from {node.EndPoint}");
-                        Copy(dbToCopy, progress, GetShardConnection(sourceEndpoint, (node.EndPoint as IPEndPoint).Port, config));
-                        Console.WriteLine($"\n{TotalKeysCopiedToDestination} keys copied in {TotalTimeTakenToCopySeconds} seconds");
+                        var sourceEndpointstring = $"{sourceEndpoint}:{(node.EndPoint as IPEndPoint).Port}";
+                        Console.WriteLine($"Copying keys from {sourceEndpointstring}");
+                        Copy(dbToCopy, progress, GetConnectionMultiplexer(sourceEndpoint, (node.EndPoint as IPEndPoint).Port, config));
+                        Console.WriteLine($"\nCopied {TotalKeysCopiedToDestination} keys from {sourceEndpointstring} to {destEndpoint} in {TotalTimeTakenToCopySeconds} seconds\n");
                     }
                 }
             } else
             {
                 //non clustered cache
                 Copy(dbToCopy, progress, sourcecon);
-                Console.WriteLine($"\n{TotalKeysCopiedToDestination} keys copied in {TotalTimeTakenToCopySeconds} seconds");
+                Console.WriteLine($"\nCopied {TotalKeysCopiedToDestination} keys from {sourceEndpoint} to {destEndpoint} in {TotalTimeTakenToCopySeconds} seconds");
             }
         }
 
