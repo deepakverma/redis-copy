@@ -198,14 +198,14 @@ namespace redis_copy
                         var sourceEndpointstring = $"{sourceEndpoint}:{(node.EndPoint as IPEndPoint).Port}";
                         Console.WriteLine($"Copying keys from {sourceEndpointstring}");
                         Copy(dbToCopy, progress, GetConnectionMultiplexer(sourceEndpoint, (node.EndPoint as IPEndPoint).Port, config));
-                        Console.WriteLine($"\nCopied {TotalKeysCopiedToDestination} keys from {sourceEndpointstring} to {destEndpoint} in {TotalTimeTakenToCopySeconds} seconds\n");
+                        Console.WriteLine($"\rCopied {TotalKeysCopiedToDestination} keys from {sourceEndpointstring} to {destEndpoint} in {TotalTimeTakenToCopySeconds} seconds\n");
                     }
                 }
             } else
             {
                 //non clustered cache
                 Copy(dbToCopy, progress, sourcecon);
-                Console.WriteLine($"\nCopied {TotalKeysCopiedToDestination} keys from {sourceEndpoint} to {destEndpoint} in {TotalTimeTakenToCopySeconds} seconds");
+                Console.WriteLine($"\rCopied {TotalKeysCopiedToDestination} keys from {sourceEndpoint} to {destEndpoint} in {TotalTimeTakenToCopySeconds} seconds");
             }
         }
 
