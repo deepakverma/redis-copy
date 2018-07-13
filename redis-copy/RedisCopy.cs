@@ -83,6 +83,11 @@ namespace redis_copy
             totalKeysCopied = 0;
             IsCopyComplete = false;
             InfoTotalKeysSource = GetTotalKeysFromInfo(connToSource);
+            if(InfoTotalKeysSource == 0)
+            {
+                Console.WriteLine($"no keys found in db {dbToCopy}");
+                return;
+            }
             TotalTimeTakenToCopySeconds = 0;
             var sourcedb = connToSource.GetDatabase(dbToCopy);
             var destdb = destcon.GetDatabase(dbToCopy);
@@ -135,7 +140,17 @@ namespace redis_copy
         private long GetTotalKeysFromInfo(ConnectionMultiplexer conn)
         {
             var keyspace = conn.GetServer(conn.GetEndPoints()[0]).Info("keyspace");
-            return long.Parse(keyspace.First().ElementAt(dbToCopy).Value.Split(new char[] { ',' })[0].Split(new char[] { '=' })[1]);
+            long result = 0;
+            var k = keyspace.FirstOrDefault();
+            if (k != null)
+            {
+                var v = k.ElementAtOrDefault(dbToCopy);
+                if (!v.Equals(new KeyValuePair<string,string>()))
+                {
+                    long.TryParse(v.Value.Split(new char[] { ',' })[0].Split(new char[] { '=' })[1], out result);
+                }
+            }
+            return result;
         }
 
         private void FlushdbIfOpted()
