@@ -19,15 +19,8 @@ namespace redis_copy
             if (options != null)
             {
                 var copy = new RedisCopy(options);
-                Progress<long> progress = new Progress<long>();
-                progress.ProgressChanged += Progress_ProgressChanged;
-                copy.Copy(options.DBToCopy, progress);
+                copy.Copy();
             }
-        }
-
-        private static void Progress_ProgressChanged(Object sender, long TotalKeysCopiedToDestination)
-        {
-            Console.Write($"Keys copied {TotalKeysCopiedToDestination}\r");
         }
     }
 }
