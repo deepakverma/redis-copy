@@ -11,10 +11,6 @@ using StackExchange.Redis;
 
 namespace redis_copy
 {
-    class Progress
-    {
-        public double percent;
-    }
 
     class RedisCopy
     {
@@ -25,7 +21,8 @@ namespace redis_copy
         private bool flushdest = false;
         private bool flushdbconfirm = false;
         private int dbToCopy;
-        private volatile ConcurrentDictionary<string, Progress> TasksInProgress = new ConcurrentDictionary<string, Progress>();
+        private ConcurrentDictionary<string, double> TasksInProgress = new ConcurrentDictionary<string, double>();
+        private double percent;
         private object progressLock = new object();
         //variables to track the console cursor        
         private int cursorTop; // top when the progress started
@@ -79,7 +76,7 @@ namespace redis_copy
             foreach (var p in TasksInProgress)
             {
                 Console.CursorTop = temp++;
-                Console.Write($"\r{p.Key.Replace("Unspecified/", "")} => {destEndpoint} ({Math.Round(p.Value.percent)}%)");
+                Console.Write($"\r{p.Key.Replace("Unspecified/", "")} => {destEndpoint} ({Math.Round(p.Value)}%)");
             }
 
         }
@@ -114,8 +111,7 @@ namespace redis_copy
             var destdb = destcon.GetDatabase(dbToCopy);
             double percent;
             var source = connToSource.GetEndPoints()[0].ToString();
-            TasksInProgress[source] = new Progress();
-            var thisprogress = TasksInProgress[source];
+            TasksInProgress[source] = 0.0;
 
             Stopwatch sw = Stopwatch.StartNew();
             foreach (var key in connToSource.GetServer(connToSource.GetEndPoints()[0]).Keys(dbToCopy)) //SE.Redis internally calls SCAN here
@@ -139,7 +135,7 @@ namespace redis_copy
                                 {
                                     Interlocked.Increment(ref totalKeysCopied);
                                     percent = ((double)totalKeysCopied / totalKeysSource) * 100;
-                                    Interlocked.Exchange(ref thisprogress.percent, percent);
+                                    TasksInProgress[source] = percent;
                                 });
                             }
                         }
@@ -153,7 +149,7 @@ namespace redis_copy
                 await Task.Delay(500);
             }
             sw.Stop();
-            Progress temp;
+            double temp;
             TasksInProgress.TryRemove(source, out temp);
             return new Tuple<long, double>(totalKeysCopied, Math.Round(sw.Elapsed.TotalSeconds));
         }
@@ -233,6 +229,7 @@ namespace redis_copy
             if (sourceClusternodes != null)
             {
                 var config = ConfigurationOptions.Parse(sourcecon.Configuration);
+                List<Tuple<string, long, double>> results = new List<Tuple<string, long, double>>();
                 List<Task> copytasks = new List<Task>();
                 foreach (var node in sourceClusternodes.Nodes)
                 {
@@ -243,17 +240,21 @@ namespace redis_copy
                         copytasks.Add(Task.Factory.StartNew(async () =>
                         {
                             var shardcon = GetConnectionMultiplexer(sourceEndpoint, (node.EndPoint as IPEndPoint).Port, config);
-                            var t = await Copy(shardcon);
-                            Console.CursorTop = cursorTop + Interlocked.Increment(ref totalcursorsinProgress);
-                            Console.CursorLeft = 0;
-                            Console.WriteLine($"Copied {t.Item1} keys from {sourceEndpointstring} to {destEndpoint} in {t.Item2} seconds\n");
+                            var r = await Copy(shardcon);
+                            results.Add(new Tuple<string, long, double>(sourceEndpointstring, r.Item1, r.Item2));
                             shardcon.Close();
-
                         }));
                         totalcursorsinProgress++;
                     }
                 }
                 await Task.WhenAll(copytasks);
+                var cursor = cursorTop + totalcursorsinProgress;
+                foreach (var result in results)
+                {
+                    Console.CursorTop = cursor++;
+                    Console.CursorLeft = 0;
+                    Console.WriteLine($"Copied {result.Item2} keys from {result.Item1} to {destEndpoint} in {result.Item3} seconds\n");
+                }
                 allCopied = true;
             } else
             {
