@@ -66,6 +66,7 @@ namespace redis_copy
                 Console.CursorTop = temp;
             }
             Console.CursorVisible = true;
+            Console.CursorLeft = 0;
             Console.WriteLine("Done copying");
         }
 
@@ -149,8 +150,7 @@ namespace redis_copy
                 await Task.Delay(500);
             }
             sw.Stop();
-            double temp;
-            TasksInProgress.TryRemove(source, out temp);
+            TasksInProgress[source] = 100;
             return new Tuple<long, double>(totalKeysCopied, Math.Round(sw.Elapsed.TotalSeconds));
         }
 
@@ -214,8 +214,11 @@ namespace redis_copy
                     }
                 } else
                 {
-                    Console.WriteLine($"Flushing db {dbToCopy} on destination {destination}");
-                    destcon.GetServer(destcon.GetEndPoints()[0]).FlushDatabaseAsync(dbToCopy);
+                    if (flushdbconfirm)
+                    {
+                        Console.WriteLine($"Flushing db {dbToCopy} on destination {destination}");
+                        destcon.GetServer(destcon.GetEndPoints()[0]).FlushDatabaseAsync(dbToCopy);
+                    }
                 }
             }
         }
@@ -235,12 +238,12 @@ namespace redis_copy
                 {
                     if (!node.IsSlave)
                     {
-                        var sourceEndpointstring = $"{sourceEndpoint}:{(node.EndPoint as IPEndPoint).Port}";
                         //Console.WriteLine($"Copying keys from {sourceEndpointstring}");
-                        copytasks.Add(Task.Factory.StartNew(async () =>
+                        copytasks.Add(Task.Run(async () =>
                         {
                             var shardcon = GetConnectionMultiplexer(sourceEndpoint, (node.EndPoint as IPEndPoint).Port, config);
                             var r = await Copy(shardcon);
+                            var sourceEndpointstring = $"{sourceEndpoint}:{(node.EndPoint as IPEndPoint).Port}";
                             results.Add(new Tuple<string, long, double>(sourceEndpointstring, r.Item1, r.Item2));
                             shardcon.Close();
                         }));
