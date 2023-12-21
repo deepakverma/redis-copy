@@ -67,7 +67,12 @@ namespace redis_copy
             }
             Console.CursorVisible = true;
             Console.CursorLeft = 0;
+            Console.WriteLine();
             Console.WriteLine("Done copying");
+            Console.WriteLine("!!Important");
+            Console.WriteLine("!!This tool does a point in time copy of data:expired keys or new data being written to source during transfer was not copied");
+            Console.WriteLine("Please check the source and destination keys to make sure the copy was successful");
+            Console.WriteLine();
         }
 
         private void PrintTasksInProgress()
@@ -113,39 +118,58 @@ namespace redis_copy
             double percent;
             var source = connToSource.GetEndPoints()[0].ToString();
             TasksInProgress[source] = 0.0;
-
+            Console.WriteLine("***Performing a point in time copy of data:expired keys or new data being written to source during transfer won't be copied***");
             Stopwatch sw = Stopwatch.StartNew();
-            foreach (var key in connToSource.GetServer(connToSource.GetEndPoints()[0]).Keys(dbToCopy)) //SE.Redis internally calls SCAN here
+            IEnumerable<RedisKey> scanResults;
+            long totalCountToBeCopied = 0;
+            do
             {
-                sourcedb.KeyTimeToLiveAsync(key).ContinueWith(async ttl =>
+                scanResults = connToSource.GetServer(connToSource.GetEndPoints()[0]).Keys(dbToCopy); //SE.Redis internally calls SCAN here
+                Interlocked.Add(ref totalCountToBeCopied, scanResults.Count());
+
+                foreach (var key in scanResults) 
                 {
-                    if (ttl.IsFaulted || ttl.IsCanceled)
+                    sourcedb.KeyTimeToLiveAsync(key).ContinueWith(async ttl =>
                     {
-                        throw new AggregateException(ttl.Exception);
-                    } else
-                    {
-                        sourcedb.KeyDumpAsync(key).ContinueWith(dump =>
+                        if (ttl.IsFaulted || ttl.IsCanceled)
                         {
-                            if (dump.IsFaulted || dump.IsCanceled)
-                            {
-                                throw new AggregateException(dump.Exception);
-                            } else
-                            {
-                                //Redis > 3.0, if key already exists it won't overwrite
-                                destdb.KeyRestoreAsync(key, dump.Result, ttl.Result).ContinueWith(restore =>
-                                {
-                                    Interlocked.Increment(ref totalKeysCopied);
-                                    percent = ((double)totalKeysCopied / totalKeysSource) * 100;
-                                    TasksInProgress[source] = percent;
-                                });
-                            }
+                            throw new AggregateException(ttl.Exception);
                         }
-                        );
-                    }
-                });
-            }
+                        else
+                        {
+                            sourcedb.KeyDumpAsync(key).ContinueWith(dump =>
+                            {
+                                if (dump.IsFaulted || dump.IsCanceled)
+                                {
+                                    throw new AggregateException(dump.Exception);
+                                }
+                                else
+                                {
+                                    //Redis > 3.0, if key already exists it won't overwrite
+                                    destdb.KeyRestoreAsync(key, dump.Result, ttl.Result).ContinueWith(restore =>
+                                    {
+                                        if (restore.IsFaulted || restore.IsCanceled)
+                                        {
+                                            throw new AggregateException(restore.Exception);
+                                        }
+                                        else
+                                        {
+                                            Interlocked.Increment(ref totalKeysCopied);
+                                            Interlocked.Decrement(ref totalCountToBeCopied);
+                                            percent = ((double)totalKeysCopied / totalKeysSource) * 100;
+                                            TasksInProgress[source] = percent;
+                                        }
+                                    });
+                                }
+                            }
+                            );
+                        }
+                    });
+                }
+
+            } while (scanResults.Count() > 0);
             //block to monitor completion
-            while (totalKeysCopied < totalKeysSource)
+            while (Interlocked.Read(ref totalCountToBeCopied) > 0)
             {
                 await Task.Delay(500);
             }
